@@ -1,13 +1,10 @@
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import base64
 import os
 import pytz
 
 from datetime import datetime, timedelta
-from PIL import Image
-from io import BytesIO
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
