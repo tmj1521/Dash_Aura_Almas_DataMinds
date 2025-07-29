@@ -2,27 +2,48 @@ import requests
 import pandas as pd
 import urllib3
 import os
-import logging
+import math
 
 from sqlalchemy import create_engine
 from datetime import datetime, timedelta
-from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.table import Table, TableStyleInfo
-from supabase import create_client, Client
 from supabase import create_client, Client
 from io import BytesIO
-from urllib.parse import urlparse, parse_qs
+from dotenv import load_dotenv
+from zoneinfo import ZoneInfo
+from supabase import create_client
+import pandas as pd
+import numpy as np
+
+# =========================================
+# Carregamento das credenciais do ambiente
+# =========================================
+load_dotenv()
+# Acesso SQL
+PASSOWORD = os.getenv("SQL_PASSWORD")
+
+# Acesso PI Web API
+TOKEN_PI_API = os.getenv("TOKEN_PI_API")
+URL_API_PI = os.getenv("URL_API_PI")
+ARQUIVO_PI_WEB_API = os.getenv("ARQUIVO_PI_WEB_API")
+
+#Acesso Supabase
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+#Acesso Onedrive
+LINK_ARQUIVO_DIA_ATUAL = os.getenv("LINK_ARQUIVO_DIA_ATUAL")
+LINK_ARQUIVO_HISTORICO = os.getenv("LINK_ARQUIVO_HISTORICO")
 
 # =======================================
 # Consultando o banco de dados SQL da F2M
 # =======================================
+
 # função para coleta dos dados
 def consulta_dados_transporte():
     server = 'sql-f2m-databases-2-prod.miningcontrol.cloud'
     database = 'mining_control_ama'
     username = 'aura_almas_bi'
-    password = 'c3YFnEL9BHJzRrEDXTtYm'
+    password = PASSOWORD
 
     # String de conexão compatível com SQLAlchemy
     conn_str = (
@@ -31,13 +52,12 @@ def consulta_dados_transporte():
         "&Encrypt=yes"
         "&TrustServerCertificate=yes"
     )
-
     # Criação da engine SQLAlchemy
     engine = create_engine(conn_str)
 
-#Coleta os dados dos ultimos 33 dias para exibição dos dados acumulados do mês
+#Coleta os dados dos ultimos 32 dias para exibição dos dados acumulados do mês
     end_time = datetime.now()
-    start_time = (end_time - timedelta(days=33)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_time = (end_time - timedelta(days=32)).replace(hour=0, minute=0, second=0, microsecond=0)
     start_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
     end_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -55,11 +75,9 @@ def consulta_dados_transporte():
     except Exception as e:
         print("Erro ao executar a consulta SQL com SQLAlchemy:", e)
         df = pd.DataFrame()
-
     return df
 
-# Data frame final sem ajustes
-df_transporte = consulta_dados_transporte()
+df_dados_mina = consulta_dados_transporte()
 
 #===========================================================
 # Coleta de dados do PI Web API - Metodo de Agregação Total
@@ -80,7 +98,7 @@ def round_to_last_0_or_5_seconds(dt):
 
 # Função para consultar valores agregados (Total por hora) de um WebID
 def fetch_data_for_webid(webid, start_time, end_time, interval):
-    base_url = "https://10.135.7.10/piwebapi/streams/"
+    base_url = URL_API_PI
     url = f"{base_url}{webid}/summary"
 
     start_time = round_to_last_0_or_5_seconds(start_time)
@@ -105,11 +123,11 @@ def fetch_data_for_webid(webid, start_time, end_time, interval):
 # Cabeçalhos da requisição
 headers = {
     "Accept": "application/json",
-    "Authorization": "Basic dGFyY2l6by5qdW5pb3I6QW5uZUBhdXJhMjAyNQ=="  # Insira o token se necessário
+    "Authorization": TOKEN_PI_API
 }
 
 # Caminho do Excel com WebIDs e Apelidos
-file_path = r'C:\Users\tarcizo.junior\OneDrive - Aura Minerals\04 - Projetos\Python\Dash_Aura_Almas_Horario\Dados\dados_piwebapi.xlsx'
+file_path = ARQUIVO_PI_WEB_API
 piwebapi_data = pd.read_excel(file_path)
 
 # Lista de IDs desejados
@@ -167,70 +185,6 @@ for webid in webids:
         print(f"Erro ao processar WebID {webid}: {e}")
         webids_com_erro.append(webid)
 
-#====================================================
-# Coleta de dados do PI Web API - Metodo Interpolação
-#====================================================
-
-# Lista de IDs de variáveis de vazão
-ids_vazao = [11]  # Substitua pelos IDs desejados
-
-# DataFrame final para dados de vazão
-df_vazao_final = pd.DataFrame()
-
-# Intervalo de coleta em segundos
-intervalo_vazao = "30s"
-
-# Loop para cada ID de vazão
-for id_vazao in ids_vazao:
-    try:
-        # Buscar WebID e Apelido da planilha
-        webid_vazao = piwebapi_data.loc[piwebapi_data['Id'] == id_vazao, 'WebId'].values[0]
-        apelido_vazao = piwebapi_data.loc[piwebapi_data['Id'] == id_vazao, 'Apelido'].values[0]
-
-        # Construir URL de interpolated values
-        url_vazao = f"https://10.135.7.10/piwebapi/streams/{webid_vazao}/interpolated"
-
-        # Ajustar datas para interpolated (considera os daddos das variaveis declaradas no inicio do bloco)
-        start_time_vazao = round_to_last_0_or_5_seconds(start_time)
-        end_time_vazao = round_to_last_0_or_5_seconds(end_time)
-
-        params_vazao = {
-            "startTime": start_time_vazao.isoformat(),
-            "endTime": end_time_vazao.isoformat(),
-            "interval": intervalo_vazao
-        }
-
-        response = requests.get(url_vazao, headers=headers, params=params_vazao, verify=False)
-
-        if response.status_code == 200:
-            data = response.json()
-            items = data.get('Items', [])
-            good_items = [item for item in items if item.get('Good') and item.get('Value') is not None]
-
-            if good_items:
-                df = pd.DataFrame(good_items)
-                df['Timestamp'] = pd.to_datetime(df['Timestamp']).dt.tz_convert('Etc/GMT+3')
-
-                # Calcular a média móvel de 200 segundos (aproximadamente 3-4 pontos para dados a cada 60s)
-                df.set_index('Timestamp', inplace=True)
-                df[apelido_vazao + "_mm200s"] = df['Value'].rolling('200s').mean()
-                df.reset_index(inplace=True)
-
-                # Manter apenas timestamp e a média móvel
-                df = df[['Timestamp', apelido_vazao + "_mm200s"]]
-
-                # Unir ao dataframe final de vazões
-                if df_vazao_final.empty:
-                    df_vazao_final = df
-                else:
-                    df_vazao_final = pd.merge(df_vazao_final, df, on='Timestamp', how='outer')
-            else:
-                print(f"Sem dados válidos para ID {id_vazao}")
-        else:
-            print(f"Erro na requisição para WebID de ID {id_vazao}: {response.status_code} - {response.text}")
-    except Exception as e:
-        print(f"Erro ao processar ID {id_vazao}: {e}")
-
 # ========================================================
 # Coleta dos dados do Onedrive empresarial (link publico)
 # ========================================================
@@ -259,53 +213,27 @@ def baixar_arquivos_onedrive(link: str, sheet_name: str) -> pd.DataFrame | None:
         print(f"❌ Erro ao processar o arquivo: {e}")
         return None
 
-# Link de compartilhamento dos arquivos
-arquivo_dia_atual = "https://auraminerals-my.sharepoint.com/:x:/p/tarcizo_junior/EdD7gQG1UsFCtkZu3JNgInsB9o6EE5TGY3vNRA41IKCZZQ?download=1" #codigos gerado no onedrive busines (pessoal corporativo)
-arquivo_historico = "https://auraminerals-my.sharepoint.com/:x:/p/tarcizo_junior/EWpS3k8SQTtHmP9Kp42u9ykBAWIZFie3z9tH8G31WOxBCw?download=1" #codigos gerado no onedrive busines (pessoal corporativo)
-
 # Carregamento das def's
-dados_planta_dia_atual = baixar_arquivos_onedrive(arquivo_dia_atual, sheet_name="Dados_painel_hora_hora")
-dados_planta_historico = baixar_arquivos_onedrive(arquivo_historico, sheet_name="BancoDadosVariáveis")
+dados_planta_dia_atual = baixar_arquivos_onedrive(LINK_ARQUIVO_DIA_ATUAL, sheet_name="Dados_painel_hora_hora")
+dados_planta_historico = baixar_arquivos_onedrive(LINK_ARQUIVO_HISTORICO, sheet_name="BancoDadosVariáveis")
 
-# ============================================================================================
-# Função de filtro de período (aplicar diretamente no dataframe, não aplicavel nas consultas)
-# ============================================================================================
-
-#Função garante que os dados estarão no periodo de tempo desejado (ultimas 24h excluindo a hora atual)
-def filtrar_por_intervalo_de_tempo(df, coluna_data, inicio, fim):
-    # Converte a coluna para datetime, se não for
-    df[coluna_data] = pd.to_datetime(df[coluna_data], errors='coerce')
-    # Aplica o filtro
-    df_filtrado = df[(df[coluna_data] >= inicio) & (df[coluna_data] < fim)]
-    return df_filtrado
-
-# Definir intervalo de tempo dinamicamente
-agora = datetime.now().replace(minute=0, second=0, microsecond=0)
-inicio = agora - timedelta(hours=24)
-
-# ============================
+# ==============================
 # Tratamento dos dados de mina
-# ============================
+# ==============================
 
 # Garante que as colunas estão como string e padroniza valores
-df_transporte['origin'] = df_transporte['origin'].astype(str).str.strip()
-df_transporte['destination_subarea'] = df_transporte['destination_subarea'].astype(str).str.strip().str.lower() #precisa converter para letra minuscula para garantir que o filtro irá funcionar corretamente
-df_transporte['exception_type'] = df_transporte['exception_type'].astype(str).str.strip().str.lower() #precisa converter para letra minuscula para garantir que o filtro irá funcionar corretamente
-df_transporte['calculated_mass'] = pd.to_numeric(df_transporte['calculated_mass'],errors='coerce').astype('float64') #garantir que a coluna esta como numero decimal
-
+df_dados_mina['origin'] = df_dados_mina['origin'].astype(str).str.strip()
+df_dados_mina['destination_subarea'] = df_dados_mina['destination_subarea'].astype(str).str.strip().str.lower() #precisa converter para letra minuscula para garantir que o filtro irá funcionar corretamente
+df_dados_mina['exception_type'] = df_dados_mina['exception_type'].astype(str).str.strip().str.lower() #precisa converter para letra minuscula para garantir que o filtro irá funcionar corretamente
+df_dados_mina['calculated_mass'] = pd.to_numeric(df_dados_mina['calculated_mass'],errors='coerce').astype('float64') #garantir que a coluna esta como numero decimal
 # Filtros aplicados um a um
-df_temp = df_transporte[df_transporte['origin'].isin(['Cava Paiol', 'Cava Sul'])]
+df_temp = df_dados_mina[df_dados_mina['origin'].isin(['Cava Paiol', 'Cava Sul'])]
 df_temp = df_temp[df_temp['destination_subarea'] != 'acesso dentro da cava']
-df_transporte_filtrado = df_temp[df_temp['exception_type'] != 'Edited_Delete'].copy()
-
+df_dados_mina = df_temp[df_temp['exception_type'] != 'Edited_Delete'].copy()
 # Arredondar as horas com minutos para hora exata
-df_transporte_filtrado.loc[:, 'hora_completa'] = pd.to_datetime(df_transporte_filtrado['datetime_end']).dt.floor('h')
-
-#filtrar intervalo de tempo (ultimas 24h excluindo a hora atual)
-#df_transporte_filtrado = filtrar_por_intervalo_de_tempo(df_transporte_filtrado, 'datetime_end', inicio, agora) # esta desativado esse filtro esta aplicado no dash
-
+df_dados_mina.loc[:, 'hora_completa'] = pd.to_datetime(df_dados_mina['datetime_end']).dt.floor('h')
 #Ajustar litologias no dataframe
-df_transporte_filtrado['material'] = df_transporte_filtrado['material'].replace({
+df_dados_mina['material'] = df_dados_mina['material'].replace({
     'Estéril': 'Estéril',
     'Estéril-RI': 'Estéril',
     'HG': 'HG',
@@ -322,28 +250,17 @@ df_transporte_filtrado['material'] = df_transporte_filtrado['material'].replace(
     'MW': 'MG'
 })
 
-# =========================================================
+# ===========================================================
 # Tratamento dos dados de Planta via API (Massa Alimentada)
-# =========================================================
+# ===========================================================
+
 # Excluir colunas desnecessarias
 df_totalizador['Timestamp'] = pd.to_datetime(df_totalizador['Timestamp'], errors='coerce')
 df_totalizador = df_totalizador.drop(columns=['UnitsAbbreviation','Good','Questionable','Substituted','Annotated'])
-#filtrar intervalo de tempo (ultimas 24h excluindo a hora atual)
-#df_totalizador = filtrar_por_intervalo_de_tempo(df_totalizador, 'Timestamp', inicio, agora) # esta desativado esse filtro esta aplicado no dash
 #converter coluna timestamp para string
 df_totalizador['Timestamp'] = df_totalizador['Timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S')
 #Mudar o nome da coluna para garantir compatibilidade na hora de unir os Dataframes
 df_totalizador.rename(columns={"Retomada - TR02 - Balança": "Moinho_Massa Alimentada Moagem_(t)"},inplace=True)
-
-# =============================================================
-# Tratamento dos dados de Planta via API (Vazão de Alimentação)
-# =============================================================
-#Eliminar formato date time zone
-df_vazao_final['Timestamp'] = df_vazao_final['Timestamp'].dt.tz_localize(None)
-# cRiar coluna com data e hora somente
-df_vazao_final.loc[:,'data_hora_exata'] = pd.to_datetime(df_vazao_final['Timestamp']).dt.floor('h')
-#filtrar intervalo de tempo (ultimas 24h excluindo a hora atual)
-#df_vazao_final = filtrar_por_intervalo_de_tempo(df_vazao_final, 'Timestamp', inicio, agora) # esta desativado esse filtro esta aplicado no dash
 
 # ===============================================================
 # Tratamento dos dados da planta via Onedrive (Dados Historicos)
@@ -372,7 +289,7 @@ dados_planta_historico["Data"] = pd.to_datetime(dados_planta_historico["Data"], 
 hoje = datetime.now().date()
 
 # Dois dias anteriores (sem hora)
-data_inicio = hoje - timedelta(days=33)
+data_inicio = hoje - timedelta(days=32)
 data_fim = hoje - timedelta(days=1)
 
 # Filtra os registros
@@ -430,9 +347,6 @@ dados_planta_dia_atual["Timestamp"] = pd.to_datetime(
 # União dos dataframes
 df_dados_planta = pd.concat([dados_planta_historico, dados_planta_dia_atual], ignore_index=True)
 
-# Filtrar dados no intervalo de tempo das ultimas 24h excluindo a hora atual
-#df_dados_planta = filtrar_por_intervalo_de_tempo(df_dados_planta, 'Timestamp', inicio, agora) # Desativado esta sendo aplicado no das
-
 # Garantir que ambas as colunas estejam em datetime completo (com hora)
 df_dados_planta["Timestamp"] = pd.to_datetime(df_dados_planta["Timestamp"], errors="coerce")
 df_totalizador["Timestamp"] = pd.to_datetime(df_totalizador["Timestamp"], errors="coerce")
@@ -449,134 +363,94 @@ df_dados_planta = df_totalizador.merge(
     how="left"  
 )
 
-#Exclusão de colunas desnecessarias
-#df_dados_planta=df_dados_planta.drop(columns=['Hora corrigida','Data'])
-
-# ==========================
-# Exportar dados para .xlsx
-# ==========================
-
-# Caminho de destino
-destinos_arquivos = r'C:\Users\Dataminds\Aura Minerals\Almas - Performance - Data Minds - Data Minds\03 - Diretoria\Painel Hora a Hora'
-
-# === Função de exportação adaptada ===
-def salvar_dataframes_como_tabelas_padrao(dfs: dict, diretorio_destino: str):
-    caminho_saida = os.path.join(diretorio_destino, 'Dados_Teste.xlsx')
-
-    # Salva os DataFrames em planilhas individuais
-    with pd.ExcelWriter(caminho_saida, engine='openpyxl') as writer:
-        for nome_df, df in dfs.items():
-            df.to_excel(writer, sheet_name=nome_df, index=False)
-
-    # Abre o arquivo para aplicar formatações com openpyxl
-    wb = load_workbook(caminho_saida)
-
-    for nome_df in dfs.keys():
-        ws = wb[nome_df]
-        ws.sheet_view.showGridLines = False
-
-        max_row = ws.max_row
-        max_col = ws.max_column
-        letra_final = get_column_letter(max_col)
-        ref_tabela = f"A1:{letra_final}{max_row}"
-
-        nome_tabela = f"TB_{nome_df}".lower().replace(" ", "_")[:25]
-
-        tabela = Table(displayName=nome_tabela, ref=ref_tabela)
-        estilo = TableStyleInfo(
-            name="TableStyleMedium9",
-            showFirstColumn=False,
-            showLastColumn=False,
-            showRowStripes=True,
-            showColumnStripes=False
-        )
-        tabela.tableStyleInfo = estilo
-        ws.add_table(tabela)
-
-        # Ajuste da largura das colunas
-        for col_idx, col_cells in enumerate(ws.iter_cols(min_row=1, max_row=max_row, max_col=max_col), start=1):
-            col_letter = get_column_letter(col_idx)
-            max_length = max(len(str(cell.value)) if cell.value is not None else 0 for cell in col_cells)
-            ws.column_dimensions[col_letter].width = max_length + 2
-
-    wb.save(caminho_saida)
-    logging.info(f"Arquivo 'Dados_Transporte_Mina.xlsx' salvo com sucesso em: {caminho_saida}")
-
-# Chamada da função com os novos DataFrames
-salvar_dataframes_como_tabelas_padrao(
-    dfs={
-        'df_alimentacao_moagem': df_totalizador,
-        'df_media_movel': df_vazao_final,
-        'df_transporte_filtrado': df_transporte_filtrado,
-        'dados_planta': df_dados_planta
-    },
-    diretorio_destino=destinos_arquivos
-)
-
-# ================================================================
-# Conversão de dados para garantir compatibilidade com o supabase
-# ================================================================
-#converter coluna timestamp para string
-df_transporte_filtrado['datetime_end'] = df_transporte_filtrado['datetime_end'].dt.strftime('%Y-%m-%dT%H:%M:%S')
-df_transporte_filtrado['hora_completa'] = df_transporte_filtrado['hora_completa'].dt.strftime('%Y-%m-%dT%H:%M:%S')
-df_vazao_final['Timestamp'] = df_vazao_final['Timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S')
-df_vazao_final['data_hora_exata'] = df_vazao_final['data_hora_exata'].dt.strftime('%Y-%m-%dT%H:%M:%S')
-df_dados_planta['Timestamp'] = df_dados_planta['Timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S')
-df_totalizador['Timestamp'] = df_totalizador['Timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S')
-
-#Mudar o nome da coluna para garantir compatibilidade com a tabela do supabase, depois vou eliminar esse trecho
-df_totalizador.rename(columns={"Moinho_Massa Alimentada Moagem_(t)": "Retomada - TR02 - Balança"},inplace=True) #Moinho_Massa Alimentada Moagem_(t)
-
-# 1. Converte colunas numéricas
-colunas_numericas = ["Britagem_Massa Produzida Britagem_(t)"]
-for col in colunas_numericas:
+# Limpeza e transformação no df_dados_planta
+colunas_num = ["Britagem_Massa Produzida Britagem_(t)"]
+for col in colunas_num:
     df_dados_planta[col] = pd.to_numeric(df_dados_planta[col], errors="coerce")
 
-# 2. Colunas de texto
-colunas_texto = [
+colunas_txt = [
     "Britagem_Justificativa de NÂO atingir a massa_(txt)",
     "Moinho_Justificativa de NÂO atingir a massa_(txt)",
     "Moinho_Justificativa do Tempo operando com taxa a menor_(txt)"
 ]
-for col in colunas_texto:
+for col in colunas_txt:
     df_dados_planta[col] = df_dados_planta[col].astype(str).replace({'nan': None, '': None})
 
-# 3. Força todos os tipos para 'object'
 for col in df_dados_planta.columns:
     df_dados_planta[col] = df_dados_planta[col].astype("object")
 
-# 4. Substitui todos os NaN por None
 df_dados_planta = df_dados_planta.where(pd.notnull(df_dados_planta), None)
 
-# 5. Converte para dicionário e valida
 dados = df_dados_planta.to_dict(orient='records')
-
-import math
 for i, linha in enumerate(dados):
     for chave, valor in linha.items():
         if isinstance(valor, float) and (math.isnan(valor) or math.isinf(valor)):
-            raise ValueError(f"❌ Valor inválido detectado na linha {i}, coluna '{chave}': {valor}")
+            raise ValueError(f"❌ Valor inválido na linha {i}, coluna '{chave}': {valor}")
 
-# =============================
-# Enviar dados para o supabase
-# =============================
-# Supabase config
-SUPABASE_URL = "https://bhjsqkraqjigjlrwueal.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJoanNxa3JhcWppZ2pscnd1ZWFsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTMxMjU3NTksImV4cCI6MjA2ODcwMTc1OX0.W10ta4ovNyFsVfc9u1OLA5-uzDzLETNbUAR_EOhMMvc"
+# ===============================================================
+# Tratamento dos dados para envio ao Supabase com fuso horário
+# ===============================================================
 
-#função para enviar os dados
-def enviar_dados_para_supabase(df, table_name, url, key):
-    supabase: Client = create_client(url, key)
-    # Converte o DataFrame para dicionário
-    dados = df.to_dict(orient='records')
-    # Deleta todos os dados da tabela (usa condição para evitar erro)
+# fuso horário Brasil‑São Paulo
+tz_br = ZoneInfo("America/Sao_Paulo")
+
+def preparar_df(df, ts_cols):
+    for col in ts_cols:
+        df[col] = (
+            pd.to_datetime(df[col], errors='coerce')  # transforma em datetime
+              .dt.tz_localize(tz_br, ambiguous='infer', nonexistent='shift_forward')  # diz que está em Brasília
+              .dt.tz_convert("UTC")  # converte para UTC
+        )
+    return df
+
+# prepara timestamps com fuso
+df_dados_mina = preparar_df(df_dados_mina, ['datetime_end', 'hora_completa'])
+df_dados_planta = preparar_df(df_dados_planta, ['Timestamp'])
+
+# Função de envio com processamento em blocos e serialização de datetime com fuso
+def enviar_dados_supabase(df, table_name, url, key, chunk_size=500):
+    supabase = create_client(url, key)
+
+    # Serialização robusta
+    def serializar_valor(valor):
+        if pd.isna(valor):  # Trata NaN, NaT, None
+            return None
+        if isinstance(valor, pd.Timestamp):
+            return valor.isoformat()
+        if isinstance(valor, (np.integer, np.floating)):
+            return valor.item()
+        if isinstance(valor, float) and (np.isnan(valor) or np.isinf(valor)):
+            return None
+        return valor
+
+    # Etapa 1: substitui NaNs e aplica serialização
+    df_serializado = df.apply(lambda col: col.map(serializar_valor))
+
+    # Etapa 2: transforma em registros validados
+    registros = []
+    for _, row in df_serializado.iterrows():
+        registro = {}
+        for col, val in row.items():
+            try:
+                # Conversão final defensiva
+                if isinstance(val, float) and (np.isnan(val) or np.isinf(val)):
+                    registro[col] = None
+                else:
+                    registro[col] = val
+            except Exception:
+                registro[col] = None
+        registros.append(registro)
+
+    # Limpa a tabela
     supabase.table(table_name).delete().neq("id", 0).execute()
-    # Insere os novos dados
-    resposta = supabase.table(table_name).insert(dados).execute()
+
+    # Insere em blocos
+    resposta = None
+    for i in range(0, len(registros), chunk_size):
+        batch = registros[i:i+chunk_size]
+        resposta = supabase.table(table_name).insert(batch).execute()
     return resposta
 
-# Chamada da função
-resposta = enviar_dados_para_supabase(df_totalizador, 'alimentacao_moagem', SUPABASE_URL, SUPABASE_KEY)
-resposta = enviar_dados_para_supabase(df_vazao_final, 'alimentacao_planta_media_movel', SUPABASE_URL, SUPABASE_KEY)
-resposta = enviar_dados_para_supabase(df_transporte_filtrado, 'movimentacao_mina', SUPABASE_URL, SUPABASE_KEY)
-resposta = enviar_dados_para_supabase(df_dados_planta, 'dados_planta', SUPABASE_URL, SUPABASE_KEY)
+# chamadas ajustadas
+resposta1 = enviar_dados_supabase(df_dados_mina, 'repositorio_mina_fuso', SUPABASE_URL, SUPABASE_KEY)
+resposta2 = enviar_dados_supabase(df_dados_planta, 'repositorio_planta_fuso', SUPABASE_URL, SUPABASE_KEY)

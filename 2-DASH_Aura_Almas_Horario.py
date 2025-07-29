@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # Atualiza a cada 10 minutos
