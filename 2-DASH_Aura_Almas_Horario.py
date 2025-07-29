@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 # Atualiza a cada 10 minutos
 st_autorefresh(interval=600 * 1000, key="auto_refresh")
@@ -64,8 +65,30 @@ df_dados_planta.rename(columns={
 # ==============================================
 
 #Parametros para filtrar os dados dos graficos com base nas ultimas 24 horas
-parametro_agora = datetime.now(timezone.utc)
-parametro_inicio = parametro_agora - timedelta(hours=24)
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+# Define fuso horário
+tz_br = ZoneInfo("America/Sao_Paulo")
+tz_utc = ZoneInfo("UTC")
+
+# Agora (em Brasília)
+agora_brasilia = datetime.now(tz_br)
+
+# Ajusta para hora cheia anterior (ex: se for 15h27 → considera 14h)
+agora_brasilia = agora_brasilia.replace(minute=0, second=0, microsecond=0)
+
+# Parâmetros em BRT
+parametro_inicio_brt = agora_brasilia - timedelta(hours=24)
+parametro_fim_brt = agora_brasilia
+
+# Converte para UTC
+parametro_inicio = parametro_inicio_brt.astimezone(tz_utc)
+parametro_agora = parametro_fim_brt.astimezone(tz_utc)
+
+# Para debug:
+print("Intervalo desejado em BRT:", parametro_inicio_brt, "→", parametro_fim_brt)
+print("Intervalo usado em UTC:", parametro_inicio, "→", parametro_agora)
 
 # Função para agregar dados por hora
 def agregar_por_hora(
@@ -199,25 +222,21 @@ def gerar_grafico_colunas(
     yaxis_max=None,
     colunas_tooltip=None
 ):
-    # Garante que existe DataFrame, mesmo que vazio
+    tz_br = ZoneInfo("America/Sao_Paulo")
     df_plot = df_agrupado.copy() if df_agrupado is not None else pd.DataFrame(columns=['hora', 'valor'])
 
-    # Garante que as colunas esperadas existem (mesmo se vazias)
     for col in ['hora', 'valor']:
         if col not in df_plot.columns:
             df_plot[col] = pd.NaT if col == 'hora' else 0
 
-    # Garante timezone-aware na coluna 'hora'
-    if not pd.api.types.is_datetime64_any_dtype(df_plot['hora']):
-        df_plot['hora'] = pd.to_datetime(df_plot['hora'], utc=True, errors='coerce')
-    elif df_plot['hora'].dt.tz is None:
-        df_plot['hora'] = df_plot['hora'].dt.tz_localize('UTC')
+    # Garante que hora está com timezone e converte para horário de Brasília
+    df_plot['hora'] = pd.to_datetime(df_plot['hora'], utc=True, errors='coerce')
+    df_plot['hora_br'] = df_plot['hora'].dt.tz_convert(tz_br)
 
-    # Formata strings para hora e data
-    df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
-    df_plot['data'] = df_plot['hora'].dt.strftime('%d/%m')
+    # Usa hora convertida para formatação e lógica de troca de dia
+    df_plot['hora_str'] = df_plot['hora_br'].dt.strftime('%H')
+    df_plot['data'] = df_plot['hora_br'].dt.strftime('%d/%m')
 
-    # Colunas para o hover (tooltip)
     colunas_tooltip = colunas_tooltip or []
     customdata = []
 
@@ -232,19 +251,16 @@ def gerar_grafico_colunas(
         linha_tooltip.append(f"<b>Valor</b>: {row['valor']:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."))
         customdata.append("<br>".join(linha_tooltip))
 
-    # Aplica cor condicional
     if valor_referencia is not None:
         df_plot['cor'] = df_plot['valor'].apply(lambda x: "#F4614D" if x < valor_referencia else "#2D3D70")
     else:
         df_plot['cor'] = "#2D3D70"
 
-    # Índice de troca de dia (evita erro se vazio)
-    dia_hoje = datetime.now(timezone.utc).date()
-    troca_idx = df_plot[df_plot['hora'].dt.date == dia_hoje].index.min()
+    dia_hoje_br = datetime.now(tz_br).date()
+    troca_idx = df_plot[df_plot['hora_br'].dt.date == dia_hoje_br].index.min()
     if pd.isna(troca_idx):
         troca_idx = None
 
-    # Criação do gráfico
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df_plot['hora_str'],
@@ -257,7 +273,7 @@ def gerar_grafico_colunas(
         hovertemplate="%{customdata}<extra></extra>",
         customdata=customdata
     ))
-    # Linha de meta
+
     if valor_referencia is not None:
         fig.add_hline(
             y=valor_referencia,
@@ -269,7 +285,7 @@ def gerar_grafico_colunas(
             annotation_font_color="black",
             annotation_yshift=50
         )
-    # Linha vertical de troca de dia e rótulos
+
     if troca_idx is not None and troca_idx > 0:
         fig.add_vline(
             x=troca_idx - 0.5,
@@ -282,7 +298,7 @@ def gerar_grafico_colunas(
             y=1.09,
             xref='x',
             yref='paper',
-            text=(dia_hoje - timedelta(days=1)).strftime('%d/%m'),
+            text=(dia_hoje_br - timedelta(days=1)).strftime('%d/%m'),
             showarrow=False,
             yanchor="top",
             font=dict(size=14, color="black")
@@ -292,30 +308,16 @@ def gerar_grafico_colunas(
             y=1.09,
             xref='x',
             yref='paper',
-            text=dia_hoje.strftime('%d/%m'),
+            text=dia_hoje_br.strftime('%d/%m'),
             showarrow=False,
             yanchor="top",
             font=dict(size=14, color="black")
         )
-    # Layout final
+
     fig.update_layout(
-        title=dict(
-            text=titulo,
-            x=0.0,
-            xanchor='left',
-            font=dict(size=20, family='Arial', color='black')
-        ),
-        xaxis=dict(
-            tickangle=0,
-            type='category',
-            tickfont=dict(size=16, family='Arial', color='black'),
-            showline=True,
-            linecolor='black'
-        ),
-        yaxis=dict(
-            visible=False,
-            range=[yaxis_min, yaxis_max] if yaxis_min is not None and yaxis_max is not None else None
-        ),
+        title=dict(text=titulo, x=0.0, xanchor='left', font=dict(size=20, family='Arial', color='black')),
+        xaxis=dict(tickangle=0, type='category', tickfont=dict(size=16, family='Arial', color='black'), showline=True, linecolor='black'),
+        yaxis=dict(visible=False, range=[yaxis_min, yaxis_max] if yaxis_min is not None and yaxis_max is not None else None),
         bargap=0.2,
         margin=dict(t=40, b=20, l=0, r=0),
         plot_bgcolor='white',
@@ -334,38 +336,32 @@ def gerar_grafico_empilhado(
     cores_categorias=None,
     tooltip_template=None
 ):
+    tz_br = ZoneInfo("America/Sao_Paulo")
     df_plot = df_agrupado.copy()
 
-    # Se vazio, retorna figura em branco com título
     if df_plot.empty or 'hora' not in df_plot.columns or 'categoria' not in df_plot.columns:
         fig = go.Figure()
         fig.update_layout(
-            title=dict(
-                text=f"{titulo} (sem dados disponíveis)",
-                x=0.0,
-                xanchor='left',
-                font=dict(size=20, family='Arial', color='gray')
-            ),
+            title=dict(text=f"{titulo} (sem dados disponíveis)", x=0.0, xanchor='left',
+                       font=dict(size=20, family='Arial', color='gray')),
             plot_bgcolor='white',
             paper_bgcolor='white',
             height=300
         )
         return fig
 
-    # Ordena por hora e categoria
-    df_plot = df_plot.sort_values(['hora', 'categoria'])
-    df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
+    df_plot['hora'] = pd.to_datetime(df_plot['hora'], utc=True, errors='coerce')
+    df_plot['hora_br'] = df_plot['hora'].dt.tz_convert(tz_br)
+    df_plot = df_plot.sort_values(['hora_br', 'categoria'])
 
-    # Define ordem cronológica no eixo X
-    categorias_x = list(dict.fromkeys(df_plot.sort_values('hora')['hora_str'].tolist()))
+    df_plot['hora_str'] = df_plot['hora_br'].dt.strftime('%H')
+    categorias_x = list(dict.fromkeys(df_plot.sort_values('hora_br')['hora_str'].tolist()))
     df_plot['hora_str'] = pd.Categorical(df_plot['hora_str'], categories=categorias_x, ordered=True)
 
-    # Detecta troca de dia
-    dia_hoje = datetime.now().date()
-    troca_hora = df_plot[df_plot['hora'].dt.date == dia_hoje]['hora'].min()
-    troca_hora_str = troca_hora.strftime('%H') if not pd.isna(troca_hora) else None
+    dia_hoje_br = datetime.now(tz_br).date()
+    troca_hora = df_plot[df_plot['hora_br'].dt.date == dia_hoje_br]['hora_str'].min()
+    troca_hora_str = troca_hora if not pd.isna(troca_hora) else None
 
-    # Cores padrão
     if cores_categorias is None:
         cores_categorias = {
             'Estéril': '#AAAAAA',
@@ -383,8 +379,6 @@ def gerar_grafico_empilhado(
         )
 
     fig = go.Figure()
-
-    # Adiciona barras empilhadas por categoria
     for cat, cor in cores_categorias.items():
         df_cat = df_plot[df_plot['categoria'] == cat]
         if not df_cat.empty:
@@ -398,7 +392,6 @@ def gerar_grafico_empilhado(
                 showlegend=True
             ))
 
-    # Rótulo com total por hora
     df_totais = df_plot.groupby('hora_str', observed=True)['valor'].sum().reset_index()
     df_totais['texto'] = df_totais['valor'].apply(lambda v: f"{v/1000:,.1f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
@@ -412,7 +405,6 @@ def gerar_grafico_empilhado(
         textfont=dict(size=14, color='black')
     ))
 
-    # Linha de troca de dia
     if troca_hora_str in categorias_x:
         troca_pos = categorias_x.index(troca_hora_str)
 
@@ -427,7 +419,7 @@ def gerar_grafico_empilhado(
             y=1.09,
             xref='x',
             yref='paper',
-            text=(dia_hoje - timedelta(days=1)).strftime('%d/%m'),
+            text=(dia_hoje_br - timedelta(days=1)).strftime('%d/%m'),
             showarrow=False,
             yanchor="top",
             font=dict(size=14, color="black")
@@ -437,7 +429,7 @@ def gerar_grafico_empilhado(
             y=1.09,
             xref='x',
             yref='paper',
-            text=dia_hoje.strftime('%d/%m'),
+            text=dia_hoje_br.strftime('%d/%m'),
             showarrow=False,
             yanchor="top",
             font=dict(size=14, color="black")
@@ -445,12 +437,7 @@ def gerar_grafico_empilhado(
 
     fig.update_layout(
         barmode='stack',
-        title=dict(
-            text=titulo,
-            x=0.0,
-            xanchor='left',
-            font=dict(size=20, family='Arial', color='black')
-        ),
+        title=dict(text=titulo, x=0.0, xanchor='left', font=dict(size=20, family='Arial', color='black')),
         xaxis=dict(
             tickangle=0,
             type='category',
