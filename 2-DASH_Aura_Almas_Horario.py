@@ -70,6 +70,7 @@ df_dados_planta.rename(columns={
 parametro_agora = datetime.now(timezone.utc)
 parametro_inicio = parametro_agora - timedelta(hours=24)
 
+# Função para agregar dados por hora
 def agregar_por_hora(
     df,
     valor_coluna,
@@ -130,7 +131,6 @@ def agregar_por_hora(
         .reset_index()
         .rename(columns={coluna_hora: 'hora', valor_coluna: 'valor'})
     )
-
     return df_agrupado
 
 # Função apra agregar dados a serem usados com a função de grafico empilhado
@@ -187,7 +187,6 @@ def agregar_por_hora_empilhado(
             valor_coluna: 'valor'
         })
     )
-
     return df_agrupado
 
 # ==============================================
@@ -250,7 +249,6 @@ def gerar_grafico_colunas(
 
     # Criação do gráfico
     fig = go.Figure()
-
     fig.add_trace(go.Bar(
         x=df_plot['hora_str'],
         y=df_plot['valor'],
@@ -262,7 +260,6 @@ def gerar_grafico_colunas(
         hovertemplate="%{customdata}<extra></extra>",
         customdata=customdata
     ))
-
     # Linha de meta
     if valor_referencia is not None:
         fig.add_hline(
@@ -275,7 +272,6 @@ def gerar_grafico_colunas(
             annotation_font_color="black",
             annotation_yshift=50
         )
-
     # Linha vertical de troca de dia e rótulos
     if troca_idx is not None and troca_idx > 0:
         fig.add_vline(
@@ -304,7 +300,6 @@ def gerar_grafico_colunas(
             yanchor="top",
             font=dict(size=14, color="black")
         )
-
     # Layout final
     fig.update_layout(
         title=dict(
@@ -330,7 +325,6 @@ def gerar_grafico_colunas(
         paper_bgcolor='white',
         height=300
     )
-
     return fig
 
 # Função para criar grafico de barras empilhadas
@@ -487,7 +481,6 @@ def gerar_grafico_empilhado(
         paper_bgcolor='white',
         height=300
     )
-
     return fig
 
 # =========================================
@@ -829,7 +822,6 @@ def ritmo_mensal(
     ritmo = ((acumulado / horas_decorridas) * (total_horas_mes - horas_decorridas)) + acumulado
     return ritmo
 
-
 # Função para calcular o ritmo do dia atual
 def ritmo_dia_atual(
     df: pd.DataFrame,
@@ -1104,35 +1096,25 @@ st.markdown("""
 
 # Carregamento dos icones
 #=========================
+# Importa os base64 já prontos
+from imagens_base64 import (
+    logo_aura,
+    logo_mina,
+    logo_moagem,
+    logo_kpi
+)
 
-#caminhos das imagens
-pasta_atual = os.path.dirname(__file__)
-logo_aura = os.path.join(pasta_atual, "Icones", "Logo_Aura.jpg")
-logo_mina = os.path.join(pasta_atual, "Icones", "caminhao.png")
-logo_moagem = os.path.join(pasta_atual, "Icones", "mill.png")
-logo_kpi = os.path.join(pasta_atual, "Icones", "kpi2.png")
+# Função utilitária para separar base64 e MIME
+def extrair_base64_e_mime(data_uri: str):
+    tipo, base64_data = data_uri.split(",", 1)
+    mime = tipo.split(":")[1].split(";")[0]
+    return base64_data, mime
 
-# Função para converter imagem em base64 e obter o tipo MIME
-def imagem_para_base64_e_tipo(caminho_imagem):
-    imagem = Image.open(caminho_imagem)
-    buffer = BytesIO()
-    extensao = os.path.splitext(caminho_imagem)[1].lower()
-    if extensao in ['.jpg', '.jpeg']:
-        formato = 'JPEG'
-        mime_type = 'image/jpeg'
-    elif extensao == '.png':
-        formato = 'PNG'
-        mime_type = 'image/png'
-    else:
-        raise ValueError(f"Formato de imagem não suportado: {extensao}")
-    imagem.save(buffer, format=formato)
-    imagem_base64 = base64.b64encode(buffer.getvalue()).decode()
-    return imagem_base64, mime_type
-
-base64_esquerda, tipo_esquerda = imagem_para_base64_e_tipo(logo_mina)
-base64_esquerda2, tipo_esquerda2 = imagem_para_base64_e_tipo(logo_moagem)
-base64_direita, tipo_direita = imagem_para_base64_e_tipo(logo_aura)
-base64_kpi, tipo_kpi = imagem_para_base64_e_tipo(logo_kpi)
+# Extração dos dados e tipos
+base64_esquerda, tipo_esquerda = extrair_base64_e_mime(logo_mina)
+base64_esquerda2, tipo_esquerda2 = extrair_base64_e_mime(logo_moagem)
+base64_direita, tipo_direita = extrair_base64_e_mime(logo_aura)
+base64_kpi, tipo_kpi = extrair_base64_e_mime(logo_kpi)
 
 # Funções para Exibição de KPIs Customizados
 #============================================
