@@ -1,0 +1,11 @@
+Copyright © 2025 Tarcizo Moreira Junior (tmj1521 - Dash_Aura_Almas_DataMinds)
+
+Todos os direitos reservados.
+
+Este código é disponibilizado publicamente apenas para fins de execução e visualização via Streamlit Cloud.
+
+É expressamente proibido copiar, modificar, redistribuir, incorporar em outros projetos ou utilizar para fins comerciais ou educacionais sem autorização prévia, por escrito, do autor.
+
+O acesso público não implica em concessão de direitos de uso.
+
+Para permissões especiais, entre em contato com o autor.
