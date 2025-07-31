@@ -65,9 +65,6 @@ df_dados_planta.rename(columns={
 # ==============================================
 
 #Parametros para filtrar os dados dos graficos com base nas ultimas 24 horas
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-
 # Define fuso horário
 tz_br = ZoneInfo("America/Sao_Paulo")
 tz_utc = ZoneInfo("UTC")
@@ -85,10 +82,6 @@ parametro_fim_brt = agora_brasilia
 # Converte para UTC
 parametro_inicio = parametro_inicio_brt.astimezone(tz_utc)
 parametro_agora = parametro_fim_brt.astimezone(tz_utc)
-
-# Para debug:
-print("Intervalo desejado em BRT:", parametro_inicio_brt, "→", parametro_fim_brt)
-print("Intervalo usado em UTC:", parametro_inicio, "→", parametro_agora)
 
 # Função para agregar dados por hora
 def agregar_por_hora(
@@ -485,7 +478,7 @@ df_agg_viagens = agregar_por_hora(
 grafico_numero_viagens = gerar_grafico_colunas(
     df_agrupado=df_agg_viagens,
     valor_referencia=71,
-    titulo='Numero de Viagens',
+    titulo='Viagens (n°)',
     yaxis_min=0
 )
 
@@ -513,6 +506,7 @@ grafico_movimentacao_litogia = gerar_grafico_empilhado(
     titulo='Movimentação por litologia (Kt)',
     legenda_yshift=20,
     yaxis_min=0,
+    yaxis_max=5000,
     cores_categorias=cores_customizadas,
     #tooltip_template="<b>Material</b>: %{customdata[0]}<br><b>Hora</b>: %{x}h<br><b>Valor</b>: %{y:,} toneladas<extra></extra>"
     tooltip_template = "<b>Material</b>: %{customdata[0]}<br><b>Hora</b>: %{x}h<br><b>Valor</b>: %{y:,.2f} toneladas<extra></extra>"

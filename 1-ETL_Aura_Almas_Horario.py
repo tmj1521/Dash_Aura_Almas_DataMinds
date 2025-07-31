@@ -19,7 +19,10 @@ import numpy as np
 # =========================================
 load_dotenv()
 # Acesso SQL
-PASSOWORD = os.getenv("SQL_PASSWORD")
+SQL_SERVER = os.getenv("SQL_SERVER")
+SQL_DATABASE = os.getenv("SQL_DATABASE")
+SQL_USER = os.getenv("SQL_USER")
+SQL_PASSWORD = os.getenv("SQL_PASSWORD")
 
 # Acesso PI Web API
 TOKEN_PI_API = os.getenv("TOKEN_PI_API")
@@ -29,6 +32,8 @@ ARQUIVO_PI_WEB_API = os.getenv("ARQUIVO_PI_WEB_API")
 #Acesso Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_TABELA_MINA_FUSO = os.getenv("SUPABASE_TABELA_MINA_FUSO")
+SUPABASE_TABELA_PLANTA_FUSO = os.getenv("SUPABASE_TABELA_PLANTA_FUSO")
 
 #Acesso Onedrive
 LINK_ARQUIVO_DIA_ATUAL = os.getenv("LINK_ARQUIVO_DIA_ATUAL")
@@ -40,10 +45,10 @@ LINK_ARQUIVO_HISTORICO = os.getenv("LINK_ARQUIVO_HISTORICO")
 
 # função para coleta dos dados
 def consulta_dados_transporte():
-    server = 'sql-f2m-databases-2-prod.miningcontrol.cloud'
-    database = 'mining_control_ama'
-    username = 'aura_almas_bi'
-    password = PASSOWORD
+    server = SQL_SERVER
+    database = SQL_DATABASE
+    username = SQL_USER
+    password = SQL_PASSWORD
 
     # String de conexão compatível com SQLAlchemy
     conn_str = (
@@ -78,6 +83,7 @@ def consulta_dados_transporte():
     return df
 
 df_dados_mina = consulta_dados_transporte()
+print("Dados F2M coletados com sucesso!")
 
 #===========================================================
 # Coleta de dados do PI Web API - Metodo de Agregação Total
@@ -185,6 +191,7 @@ for webid in webids:
         print(f"Erro ao processar WebID {webid}: {e}")
         webids_com_erro.append(webid)
 
+print("Coleta de dados do PI Web API concluída.")
 # ========================================================
 # Coleta dos dados do Onedrive empresarial (link publico)
 # ========================================================
@@ -215,7 +222,9 @@ def baixar_arquivos_onedrive(link: str, sheet_name: str) -> pd.DataFrame | None:
 
 # Carregamento das def's
 dados_planta_dia_atual = baixar_arquivos_onedrive(LINK_ARQUIVO_DIA_ATUAL, sheet_name="Dados_painel_hora_hora")
+print("Dados do dia atual coletados com sucesso!")
 dados_planta_historico = baixar_arquivos_onedrive(LINK_ARQUIVO_HISTORICO, sheet_name="BancoDadosVariáveis")
+print("Dados históricos coletados com sucesso!")
 
 # ==============================
 # Tratamento dos dados de mina
@@ -229,7 +238,7 @@ df_dados_mina['calculated_mass'] = pd.to_numeric(df_dados_mina['calculated_mass'
 # Filtros aplicados um a um
 df_temp = df_dados_mina[df_dados_mina['origin'].isin(['Cava Paiol', 'Cava Sul'])]
 df_temp = df_temp[df_temp['destination_subarea'] != 'acesso dentro da cava']
-df_dados_mina = df_temp[df_temp['exception_type'] != 'Edited_Delete'].copy()
+df_dados_mina = df_temp[df_temp['exception_type'] != 'edited_delete'].copy()
 # Arredondar as horas com minutos para hora exata
 df_dados_mina.loc[:, 'hora_completa'] = pd.to_datetime(df_dados_mina['datetime_end']).dt.floor('h')
 #Ajustar litologias no dataframe
@@ -250,6 +259,7 @@ df_dados_mina['material'] = df_dados_mina['material'].replace({
     'MW': 'MG'
 })
 
+print
 # ===========================================================
 # Tratamento dos dados de Planta via API (Massa Alimentada)
 # ===========================================================
@@ -261,6 +271,7 @@ df_totalizador = df_totalizador.drop(columns=['UnitsAbbreviation','Good','Questi
 df_totalizador['Timestamp'] = df_totalizador['Timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S')
 #Mudar o nome da coluna para garantir compatibilidade na hora de unir os Dataframes
 df_totalizador.rename(columns={"Retomada - TR02 - Balança": "Moinho_Massa Alimentada Moagem_(t)"},inplace=True)
+print("Dados do PI Web API tratados com sucesso!")
 
 # ===============================================================
 # Tratamento dos dados da planta via Onedrive (Dados Historicos)
@@ -309,7 +320,7 @@ dados_planta_historico["Timestamp"] = pd.to_datetime(
     format="%Y-%m-%d %H:%M:%S",
     errors="coerce"
 )
-
+print
 # ========================================================
 # Tratamento dos dados da planta via Onedrive (Dia Atual)
 # ========================================================
@@ -339,6 +350,7 @@ dados_planta_dia_atual["Timestamp"] = pd.to_datetime(
     format="%Y-%m-%d %H:%M:%S",
     errors="coerce"
 )
+print("Dados do dia atual tratados com sucesso!")
 
 # ===========================================================================
 # Criação do Dataframe final com os dados da planta consolidado (PI + Excel)
@@ -386,6 +398,7 @@ for i, linha in enumerate(dados):
     for chave, valor in linha.items():
         if isinstance(valor, float) and (math.isnan(valor) or math.isinf(valor)):
             raise ValueError(f"❌ Valor inválido na linha {i}, coluna '{chave}': {valor}")
+print("Dataframe da planta consolidado com sucesso!")
 
 # ===============================================================
 # Tratamento dos dados para envio ao Supabase com fuso horário
@@ -452,5 +465,7 @@ def enviar_dados_supabase(df, table_name, url, key, chunk_size=500):
     return resposta
 
 # chamadas ajustadas
-resposta1 = enviar_dados_supabase(df_dados_mina, 'repositorio_mina_fuso', SUPABASE_URL, SUPABASE_KEY)
-resposta2 = enviar_dados_supabase(df_dados_planta, 'repositorio_planta_fuso', SUPABASE_URL, SUPABASE_KEY)
+resposta1 = enviar_dados_supabase(df_dados_mina, SUPABASE_TABELA_MINA_FUSO, SUPABASE_URL, SUPABASE_KEY)
+resposta2 = enviar_dados_supabase(df_dados_planta, SUPABASE_TABELA_PLANTA_FUSO, SUPABASE_URL, SUPABASE_KEY)
+
+print("Dados enviados com sucesso para o Supabase!")
