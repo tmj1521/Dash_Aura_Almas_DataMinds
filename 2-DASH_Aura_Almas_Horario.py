@@ -367,7 +367,7 @@ def gerar_grafico_empilhado(
     if tooltip_template is None:
         tooltip_template = (
             "<b>Hora</b>: %{x}<br>"
-            "<b>Valor</b>: %{y:,.0f}<br>"
+            "<b>Valor</b>: %{y}<br>"
             "<b>Categoria</b>: %{customdata[0]}<extra></extra>"
         )
 
@@ -382,11 +382,18 @@ def gerar_grafico_empilhado(
                 marker_color=cor,
                 customdata=df_cat[['categoria']],
                 hovertemplate=tooltip_template,
-                showlegend=True
+                showlegend=True,
+                #text=df_cat['valor'].astype(int).astype(str),
+                text=df_cat['valor'].apply(lambda v: f"{int(v):,}".replace(",", ".")),
+                #text=df_cat['valor'].apply(lambda v: f"{v/1000:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+                textposition='inside',
+                textangle=0,
+                textfont=dict(size=10, color='white')
             ))
 
     df_totais = df_plot.groupby('hora_str', observed=True)['valor'].sum().reset_index()
-    df_totais['texto'] = df_totais['valor'].apply(lambda v: f"{v/1000:,.1f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    #df_totais['texto'] = df_totais['valor'].astype(int).astype(str)
+    df_totais['texto'] = df_totais['valor'].apply(lambda v: f"{v/1000:,.1f}".replace(",", "X").replace(".", ",").replace("X", "."))  # ❌ conversão para milhar
 
     fig.add_trace(go.Scatter(
         x=df_totais['hora_str'],
@@ -743,7 +750,8 @@ def ritmo_mensal(
     agora = datetime.now(fuso)
 
     # Se for dia 1, usa o mês anterior como base
-    data_base = agora - timedelta(days=1) if agora.day == 1 else agora
+    #data_base = agora - timedelta(days=1) if agora.day == 1 else agora
+    data_base = agora
     mes, ano = data_base.month, data_base.year
 
     try:
@@ -1161,12 +1169,19 @@ st.markdown(f"""
 # Criação do Layout de cada linha
 #=================================
 
+# Define o fuso horário
+fuso = pytz.timezone("America/Sao_Paulo")
+hoje = datetime.now(fuso)
+
+# Define o rótulo dinamicamente
+rotulo_acumulado_kpi = "Acumulado M-1" if hoje.day == 1 else "Acumulado"
+
 # Linha 1 - Movimentação Total / Numero de Viagens
 col1, col2 = st.columns([0.5, 0.5], gap="large")
 with col1:
     valores_kpis = {
-        "Acumulado": valor_mensal_viagens,
-        "Ritmo Mês": ritmo_viagens,
+        rotulo_acumulado_kpi: valor_mensal_viagens,
+        "Ritmo Mês Atual": ritmo_viagens,
         "Ontem": valor_ontem_viagens,
         "Hoje": valor_hoje_viagens,
         "Ritmo Dia": ritmo_viagens_dia,
@@ -1191,7 +1206,7 @@ with col1:
 
 with col2:
     valores_kpis = {
-        "Acumulado": valor_mensal_movimentacao_mina,
+        rotulo_acumulado_kpi: valor_mensal_movimentacao_mina,
         "Ritmo Mês": ritmo_movimentacao,
         "Ontem": valor_ontem_movimentacao,
         "Hoje": valor_hoje_movimentacao,
@@ -1229,7 +1244,7 @@ st.markdown(f"""
 col3, col4 = st.columns([0.5, 0.5], gap="large")
 with col3:
     valores_kpis = {
-        "Acumulado": valor_mensal_britagem,
+        rotulo_acumulado_kpi: valor_mensal_britagem,
         "Ritmo Mês": ritmo_britagem,
         "Ontem": valor_ontem_britagem,
         "Hoje": valor_hoje_britagem,
@@ -1254,7 +1269,7 @@ with col3:
         st.plotly_chart(grafico_barra_britagem.update_layout(height=270), use_container_width=True)
 with col4:
     valores_kpis = {
-        "Acumulado": valor_mensal_moagem,
+        rotulo_acumulado_kpi: valor_mensal_moagem,
         "Ritmo Mês": ritmo_moagem,
         "Ontem": valor_ontem_moagem,
         "Hoje": valor_hoje_moagem,
